@@ -1,0 +1,515 @@
+###############################################################
+##  Copyright (c) 2026 Alberto Mizrahy Campos
+#
+#   Permission is granted to use, copy, and modify this software for academic and
+#   non-commercial purposes only, provided that proper attribution is given to the author.
+#
+#   Commercial use is prohibited without explicit written permission.
+###############################################################
+
+###############################################################
+#  NEUTRON SCATTERING SIMULATION IN A ROTATING MEDIUM
+#  Author: Alberto Mizrahy Campos
+###############################################################
+
+using Plots
+using StatsBase
+using LinearAlgebra
+
+
+###############################################################
+# 1. HELPER FUNCTIONS
+###############################################################
+
+"""
+inner_product(v, w)
+
+Computes the cosine of the angle between normalized vectors `v` and `w`.
+"""
+function inner_product(v, w)
+    v = v ./ norm(v)
+    w = w ./ norm(w)
+    return v[1] * w[1] + v[2] * w[2] + v[3] * w[3]
+end
+
+
+###############################################################
+# 2. PHYSICAL MODEL
+###############################################################
+
+"""
+    rotation_field(x, omega)
+
+Rotational velocity field applied to position `x` with angular velocity `omega`.
+"""
+function rotation_field(x, omega)
+    return omega .* [-x[2] x[1] 0]
+end
+
+
+"""
+    random_unit_vector()
+
+Generates a random unit vector in 3D space.
+"""
+function random_unit_vector()
+    x1, x2, x3 = randn(), randn(), randn()
+    z = sqrt(x1^2 + x2^2 + x3^2)
+    return [x1 x2 x3] ./ z
+end
+
+
+"""
+    collide(x, v, omega, sigma, m1, m2)
+
+Computes the new velocity of a particle after a collision.
+"""
+function collide(x, v, omega, sigma, m1, m2)
+    delta = sigma .* [randn() randn() randn()]
+    w = rotation_field(x, omega)
+    eta = random_unit_vector()
+    u = v - (w + delta)
+    nu = norm(u)
+    vf = (w + delta) + nu .* (
+        (m1 / ((m1 + m2) * nu)) .* u +
+        (m2 / (m1 + m2)) .* eta
+    )
+    #VCM = ((m1 .* v .+ m2 .* (w + Delta)) ./ (m1 + m2)) 
+    #vf= VCM + (m2 / (m1 + m2)) .* nu.* Eta; 
+    #wf= VCM - (m1 / (m1 + m2)) .* nu.* Eta 
+    #Ei_minus_Ef = ((m1 * norm(v)^2 + m2 * norm(w + Delta)^2) / 2 - ((m1 * norm(vf)^2 + m2 * norm(wf)^2) / 2)) * 6.242e+18 
+    #Mi_minus_Mf = norm(m1.*v .+ m2.*(w.+Delta) - (m1.*vf+m2.*wf)) 
+    #println(Ei_minus_Ef+Mi_minus_Mf)
+    return vf
+end
+
+"""
+    Maxwell(T) 
+
+Return a Maxwell-Bolzman velocity.
+"""
+function Maxwell(T) 
+    sigma = sqrt(k_b * T / mass_neutron) 
+    return sigma .* [randn() randn() randn()] 
+end
+
+
+###############################################################
+# 3. SIMULATION CORE
+###############################################################
+
+"""
+    distance(v, x, omega, t; N=1000)
+
+Approximates the total distance traveled using the trapezoidal rule.
+"""
+function distance(v, x, omega, t; N=1000)
+    dt = t / N
+    s = 0.0
+    for i in 0:N-1
+        t1, t2 = i * dt, (i + 1) * dt
+        f1 = norm(v - rotation_field(x .+ t1 .* v, omega))
+        f2 = norm(v - rotation_field(x .+ t2 .* v, omega))
+        s += 0.5 * (f1 + f2) * dt
+    end
+    return s
+end
+
+
+"""
+    iterate_collision(x, v, step_length, lambda, omega, sigma, m1, m2)
+
+Performs one iteration of particle motion and determines whether a collision occurs.
+"""
+function iterate_collision(x, v, step_length, lambda, omega, sigma, m1, m2)
+    r = rand()
+    x_next = x + step_length * v / norm(v)
+    time_step = step_length / norm(v)
+    total_distance = distance(v, x, omega, time_step; N=1000)
+
+    if r < 1 - exp(-lambda * total_distance)
+        return x_next, collide(x, v, omega, sigma, m1, m2), 1, time_step
+    else
+        return x_next, v, 0, time_step
+    end
+end
+
+
+"""
+    simulate_particle(x, v, omega, sigma, lambda, step_length, max_radius, m1, m2)
+
+Runs a complete particle trajectory simulation until the maximum radius is reached.
+"""
+function simulate_particle(x, v, omega, sigma, lambda, step_length, max_radius, m1, m2)
+    weights = Float64[]
+    energies = Float64[(m1*norm(v)^2/2)]
+    collision_points = [x]
+    positions = [x]
+    velocities = [v]
+    time_elapsed = 0.0
+    times = Float64[time_elapsed]
+    radii = Float64[norm(x[1:2])]
+
+    while norm(x[1:2]) < max_radius
+        push!(weights, norm(v - rotation_field(x, omega)))
+        x_next, v_next, collided, dt = iterate_collision(x, v, step_length, lambda, omega, sigma, m1, m2)
+        time_elapsed += dt
+        push!(positions, x_next)
+        push!(velocities, v_next)
+
+        if collided == 1
+            push!(collision_points, x_next)
+            push!(times, time_elapsed)
+            push!(radii, norm(x_next[1:2]))
+            push!(energies, (m1 * norm(v_next)^2 / 2) * 6.242e+18)
+        end
+
+        x, v = x_next, v_next
+    end
+
+    return positions, velocities, weights, collision_points, times, radii, energies
+end
+
+
+###############################################################
+# 4. STATISTICAL / FITTING UTILITIES
+###############################################################
+
+"""
+    linear_interpolation(x, y)
+
+Computes a linear fit `y = a + b*x`.
+"""
+function linear_interpolation(x, y)
+    x = collect(x)
+    X = hcat(ones(length(x)), x)
+    coef = X \ y
+    return coef[1], coef[2]
+end
+
+
+"""
+    inverse_interpolation(x, y)
+
+Computes a linear fit `y = a + c*(1/x)`.
+"""
+function inverse_interpolation(x::AbstractVector, y::AbstractVector)
+    x, y = Float64.(x), Float64.(y)
+    z = 1.0 ./ x
+    X = hcat(ones(length(x)), z)
+    coef = X \ y
+    return coef[1], coef[2]
+end
+
+
+###############################################################
+# 5. SIMULATION PARAMETERS
+###############################################################
+
+println("Running simulation setup...")
+
+# Physical constants
+mass_neutron = 1.675e-27       # kg
+mass_u = 1.66054e-27           # kg
+k_b = 1.380649e-23             # m²·kg·s⁻²·K⁻¹
+
+# ------------------------------------------------------------
+# Atomic masses of selected materials (in kilograms)
+# ------------------------------------------------------------
+mass_Polyethylene = 4.67 * mass_u   # Polyethylene (C2H4)
+mass_Graphite = 12.00 * mass_u   # Graphite (C)
+mass_BeO = 12.51 * mass_u   # Beryllium Oxide (BeO)
+mass_Polycarbonate = 6.67 * mass_u   # Polycarbonate (C16H14O3)
+mass_PMMA = 6.67 * mass_u   # Polymethyl methacrylate (C5H8O2)
+mass_Phosphorus = 30.97 * mass_u   # Phosphorus (P)
+mass_Sulphur = 32.00 * mass_u   # Sulphur (S)
+mass_Zirconium = 91.22 * mass_u   # Zirconium (Zr)
+mass_GrPTFE = 16.53 * mass_u   # Graphite + PTFE composite (C + (C2F4)n)
+
+# ------------------------------------------------------------
+# Mean Free Path (MFP) values for each material (in meters)
+# ------------------------------------------------------------
+
+MFP_Polyethylene = 0.239e-2   # m   
+MFP_Graphite = 1.351e-2   # m  
+MFP_BeO = 0.965e-2   # m   
+MFP_Polycarbonate = 0.329e-2   # m  
+MFP_PMMA = 0.334e-2   # m   
+MFP_Phosphorus = 4.792e-2   # m   
+MFP_Sulphur = 22.079e-2  # m  
+MFP_Zirconium = 3.442e-2   # m   
+MFP_GrPTFE = 0.317e-2   # m   
+
+
+# Selected parameters
+T_kelvin = 303.0                # temperature [K]
+m1 = mass_neutron
+m2 = mass_Graphite
+MFP = MFP_Graphite
+
+sigma = sqrt(k_b * T_kelvin / m2)
+omega = 1*10^4                   # rad/s
+lambda =  1 / MFP
+
+x = [0.0 0.0 0.0]
+v = Maxwell(T_kelvin)    # m/s
+
+max_radius = 1             # m
+step_length = 0.1 / lambda
+lambdas = [0.5, 1.0, 2.0, 3.0, 4.0]
+omegas = [0.6, 0.75, 1.0, 1.2, 1.5, 2.0]
+
+###############################################################
+# 6. SIMULATION MODES
+###############################################################
+
+mode = 1  # Select mode
+
+# =============================================================
+# MODE 1 — Trajectory Visualization
+# =============================================================
+if mode == 1
+    println("Running mode 1: single trajectory visualization")
+
+    positions, velocities, weights, collision_points, times, radii, energies =
+        simulate_particle(x, v, omega, sigma, lambda, step_length, max_radius, m1, m2)
+
+    #plot(legend=false, xlabel="x (m)", ylabel="y (m)", title="Particle trajectory")
+    plot(xlabel=false, ylabel=false, title = "Neutron Trajectory Simulation in a Rotating Medium", grid=false, ticks=false, framestyle=:none, border=:none, axis=false)
+
+    colors = cgrad(:heat, 1000) # cgrad([:gray90, :black], 1000)
+    w_min, w_max = minimum(weights), maximum(weights)
+    w_norm = w_min == w_max ? zeros(length(weights)) : (weights .- w_min) ./ (w_max - w_min)
+    idx = round.(Int, 1 .+ 999 .* w_norm)
+
+    for i in 1:length(weights)
+        plot!([positions[i][1], positions[i+1][1]],
+            [positions[i][2], positions[i+1][2]],
+            color=colors[idx[i]], linewidth=3, label=false)
+    end
+
+    scatter!([p[1] for p in collision_points],
+        [p[2] for p in collision_points],
+        color=:black, markersize=1.5, label=false)
+
+    scatter!([0], [0],
+    color=:blue,
+    markersize=5,
+    markershape=:circle,
+    label="Source")
+
+    display(current())
+    savefig("mode1_trajectory.png")
+    println("Saved plot: mode1_trajectory.png")
+end
+
+
+# =============================================================
+# MODE 2 — Collision Count Distribution
+# =============================================================
+if mode == 2
+    println("Running mode 2: collision count distribution")
+
+    num_simulations = 30
+    collision_counts = Int64[]
+
+    for i in 1:num_simulations
+        println("Simulating case $i / $num_simulations")
+        v = Maxwell(T_kelvin)
+        positions, velocities, weights, collision_points, times, radii, energies =
+            simulate_particle(x, v, omega, sigma, lambda, step_length, max_radius, m1, m2)
+        push!(collision_counts, length(collision_points))
+    end
+
+    histogram(collision_counts;
+        bins=10,
+        xlabel="Number of Collisions",
+        ylabel="Frequency",
+        title="Distribution of Collision Counts",
+        legend=false,
+        linecolor=:black,
+        fillalpha=0.6)
+
+    display(current())
+    savefig("mode2_collision_distribution.png")
+    println("Saved plot: mode2_collision_distribution.png")
+end
+
+
+# =============================================================
+# MODE 3 — Trajectory Heatmap (spatial density)
+# =============================================================
+if mode == 3
+    println("Running mode 3: trajectory density heatmap")
+
+    num_simulations = 20
+    all_x, all_y = Float64[], Float64[]
+
+    for i in 1:num_simulations
+        println("Simulating case $i / $num_simulations")
+        v = Maxwell(T_kelvin)
+        positions, velocities, weights, collision_points, times, radii, energies =
+            simulate_particle(x, v, omega, sigma, lambda, step_length, max_radius, m1, m2)
+        append!(all_x, [p[1] for p in positions])
+        append!(all_y, [p[2] for p in positions])
+    end
+
+    H = fit(Histogram, (all_x, all_y), nbins=(150, 150))
+    heatmap(H.edges[1], H.edges[2], H.weights';
+        xlabel="x (m)",
+        ylabel="y (m)",
+        title="Heatmap of $num_simulations trajectories",
+        colorbar_title="Counts",
+        aspect_ratio=1,
+        c=:thermal)
+
+    display(current())
+    savefig("mode3_trajectory_heatmap.png")
+    println("Saved plot: mode3_trajectory_heatmap.png")
+end
+
+
+# =============================================================
+# MODE 4 — Final Energy and Alignment Distribution
+# =============================================================
+if mode == 4
+    println("Running mode 4: final energy and alignment statistics")
+
+    num_simulations = 2000
+    radii_list = [2, 1]   # m
+    all_energies, all_inner_products = Float64[], Float64[]
+
+    for radius in radii_list
+        x = [0.9*radius 0.0 0.0]
+        println("\nSimulating for max radius = $radius m")
+        energies_final, inner_final = Float64[], Float64[]
+
+        for i in 1:num_simulations
+            println("Simulating for max radius = $radius m. Case $i / $num_simulations")
+            v = Maxwell(T_kelvin)
+            positions, velocities, weights, collision_points, times, radii, energies =
+                simulate_particle(x, v, omega, sigma, lambda, step_length, radius, m1, m2)
+            push!(energies_final, energies[end])
+            push!(inner_final, inner_product(velocities[end], rotation_field(positions[end], omega)))
+        end
+
+        append!(all_energies, energies_final)
+        append!(all_inner_products, inner_final)
+
+        histogram(inner_final;
+            bins=50, normalize=:probability, legend=false,
+            ylabel="Probability", xlabel="Inner Product",
+            color=:gray, title="Alignment for radius = $(radius)m")
+
+        display(current())
+        savefig("mode4_alignment_r$(Int(radius*100))cm.png")
+    end
+
+    open("mode4_energies.txt", "w") do io
+        for val in all_energies
+            println(io, val)
+        end
+    end
+
+    open("mode4_inner_products.txt", "w") do io
+        for val in all_inner_products
+            println(io, val)
+        end
+    end
+
+    println("Saved energy and inner product data.")
+end
+
+
+# =============================================================
+# MODE 5 — Growth Coefficient vs Parameters (omega and lambda)
+# =============================================================
+if mode == 5
+    println("Running mode 5: fitting α coefficients vs omega and lambda")
+
+    # ---------- ω Dependence ----------
+    coef_list = Float64[]
+    gray_scale = range(0.1, 1, length=length(omegas))
+    plt1 = plot(xlabel="time (s)", ylabel="radius (m)", legend=false, title="Radius Growth vs ω", legendfontsize=12, guidefontsize=14)
+
+    for (i, ω) in enumerate(omegas)
+        println("Simulating for ω = $ω")
+        positions, velocities, weights, collision_points, times, radii, energies =
+            simulate_particle(x, v, ω, sigma, lambda, step_length, max_radius, m1, m2)
+
+        coef = sum(times .^ 2 .* radii) / sum(times .^ 4)
+        push!(coef_list, coef)
+
+        plot!(plt1, times, radii, color=RGB(gray_scale[i], gray_scale[i], gray_scale[i]), lw=2)
+        plot!(plt1, times, coef .* times .^ 2, color=RGB(gray_scale[i], gray_scale[i], gray_scale[i]),
+            lw=1.5, ls=:dash)
+    end
+
+    a, b = linear_interpolation(omegas, coef_list)
+
+    plt2 = plot(omegas, a .+ omegas .* b;
+        color=:black,
+        label="$(round(b, digits=3))ω  $(round(a, digits=3))",
+        legend=:bottomright,
+        legendfontsize=12,
+        guidefontsize=14,
+        marker=:none,
+        xlabel="ω", ylabel="α"
+    )
+    plot!(plt2, omegas, coef_list;
+        seriestype=:scatter,
+        label="",                # ← legenda vazia (não mostra bolinha)
+        markercolor=[RGB(g, g, g) for g in gray_scale],
+        markersize=6,
+    )
+
+
+    plot(plt1, plt2, layout=(1, 2))
+    display(current())
+
+    savefig("mode5_alpha_vs_omega.png")
+    println("Saved plot: mode5_alpha_vs_omega.png")
+
+
+    # ---------- λ Dependence ----------
+    coef_list = Float64[]
+    gray_scale = range(0.1, 1, length=length(lambdas))
+    plt1 = plot(xlabel="time (s)", ylabel="radius (m)", legend=false, title="Radius Growth vs λ", legendfontsize=12, guidefontsize=14)
+
+    for (i, l) in enumerate(lambdas)
+        println("Simulating for lambda = $l")
+        positions, velocities, weights, collision_points, times, radii, energies =
+            simulate_particle(x, v, omega, sigma, l, step_length, max_radius, m1, m2)
+
+        coef = sum(times .^ 2 .* radii) / sum(times .^ 4)
+        push!(coef_list, coef)
+
+        plot!(plt1, times, radii, color=RGB(gray_scale[i], gray_scale[i], gray_scale[i]), lw=2)
+        plot!(plt1, times, coef .* times .^ 2, color=RGB(gray_scale[i], gray_scale[i], gray_scale[i]),
+            lw=1.5, ls=:dash)
+    end
+
+    a, c = inverse_interpolation(lambdas, coef_list)
+
+    plt2 = plot(lambdas, a .+ (lambdas .^ (-1)) .* c;
+        color=:black,
+        label="$(round(a, digits=3)) + $(round(c, digits=3))/λ",
+        legend=:topright,
+        legendfontsize=12,
+        guidefontsize=14,
+        xlabel="λ",
+        ylabel="α",
+        marker=:none,
+    )
+    plot!(plt2, lambdas, coef_list;
+        seriestype=:scatter,
+        label="",
+        markercolor=[RGB(g, g, g) for g in gray_scale],
+        markersize=6,
+    )
+
+    plot(plt1, plt2, layout=(1, 2))
+    display(current())
+    savefig("mode5_alpha_vs_lambda.png")
+    println("Saved plot: mode5_alpha_vs_lambda.png")
+end
