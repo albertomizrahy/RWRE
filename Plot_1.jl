@@ -18,12 +18,13 @@ function histogram_to_function(data::Vector{Float64}; nbins::Int64 = 50)
 end
 
 # --- Carrega os dados dos arquivos txt
-energy = Float64.(readdlm("/home/alberto/Downloads/Dados/energy.txt"))
+energy = Float64.(readdlm("/home/alberto/Downloads/Dados/energy30.txt"))
+#energy = Float64.(readdlm("/home/alberto/Downloads/Dados/inner_product.txt"))
 
 # --- Divide em três amostras de 3000 pontos cada
-data3 = energy[1:3000]
-data2 = energy[3001:6000]
-data1 = energy[6001:9000]
+data3 = energy[1:30000]
+data2 = energy[30001:60000]
+data1 = energy[60001:90000]
 
 # --- Converte histogramas em funções interpoladas
 f1, range1 = histogram_to_function(data1, nbins=50)
@@ -45,7 +46,7 @@ plot(legendfontsize=14,
      guidefontsize=12,   # labels dos eixos
      tickfontsize=10,    # números dos ticks
      titlefontsize=16)   # título
-plot!(x, f1.(x), label="Radius 0.1", linewidth=3, color=gray1,xticks=0:0.2:3)
+plot!(x, f1.(x), label="Radius 0.1", linewidth=3, color=gray1)
 plot!(x, f2.(x), label="Radius 0.2", linewidth=3, color=gray2)
 plot!(x, f3.(x), label="Radius 0.3", linewidth=3, color=gray3)
 

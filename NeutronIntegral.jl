@@ -19,16 +19,12 @@ end
 println("=== Beggining... ===")
 
 # 1. Reading files
-data_c = readdlm("/home/alberto/Downloads/Dados/Amc.txt")
-data_t = readdlm("/home/alberto/Downloads/Dados/Amt.txt")
-data_c2 = readdlm("/home/alberto/Downloads/Dados/Lu5c.txt")
-data_t2 = readdlm("/home/alberto/Downloads/Dados/Lu5t.txt")
+data_c = readdlm("/home/alberto/Downloads/Dados/Lu5c.txt")
+data_t = readdlm("/home/alberto/Downloads/Dados/Lu5t.txt")
+data_c2 = readdlm("/home/alberto/Downloads/Dados/Lu6c.txt")
+data_t2 = readdlm("/home/alberto/Downloads/Dados/Lu6t.txt")
 energy = Float64.(readdlm("/home/alberto/Downloads/Dados/energy.txt")[:,1])
-energy = energy[3001:6000,1] #3001:6000 ==> 0.2 m, 6001,9000 ==> 0.1m
-#energy = energy[5001:10000,1]
-#energy = energy[10001:15000,1]
-#energy = energy[1:2000,1]
-#energy = energy[2001:4000,1];
+energy = energy[30001:60000,1] #3001:6000 ==> 0.2 m, 6001,9000 ==> 0.1m
 #energy = Energyzero(303)
 
 
@@ -65,13 +61,16 @@ NRa = 0.0140887e22
 NAm =0.0160117e22
 NLu5 = 0.0289366e22
 NLu6 = 0.000769385e22
-N = NAm     # atm/cm³ 
-N2 = NLu5
+N = NLu5     # atm/cm³ 
+N2 = NLu6
 L = 1 #cm
 F = 10^8
 ###############
+## Model = 1 is  for Am, Ra
+## Model = 2 is for Lu5 Lu6
+### Don't forget to change N and N2. 
 
-Model = 1
+Model = 2
 
 if Model == 1
     # 5. Integrating 
